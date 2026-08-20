@@ -106,6 +106,7 @@ function App() {
     projectId: firstProjectId,
     date: dateInputValue(),
     hours: "",
+    minutes: "",
     description: "",
     isBillable: true,
   });
@@ -207,6 +208,10 @@ function App() {
   );
   const selectedProjectTrackedMs = selectedProjectEntries.reduce(
     (total, entry) => total + entry.durationMs,
+    0,
+  );
+  const selectedProjectTotal = selectedProjectEntries.reduce(
+    (total, entry) => total + calculateEntryAmount(entry, selectedProject),
     0,
   );
   const selectedProjectPendingTotal = selectedProjectPendingEntries.reduce(
@@ -391,14 +396,15 @@ function App() {
     event.preventDefault();
 
     const projectId = manualEntryForm.projectId || firstProjectId;
-    const hours = Number(manualEntryForm.hours);
+    const hours = Number(manualEntryForm.hours || 0);
+    const minutes = Number(manualEntryForm.minutes || 0);
 
-    if (!projectId || hours <= 0) {
+    if (!projectId || hours < 0 || minutes < 0 || minutes > 59 || hours + minutes <= 0) {
       return;
     }
 
     const startAt = new Date(`${manualEntryForm.date}T09:00:00`);
-    const durationMs = Math.round(hours * 3_600_000);
+    const durationMs = Math.round(hours * 3_600_000 + minutes * 60_000);
     const endAt = new Date(startAt.getTime() + durationMs);
 
     if (editingEntryId) {
@@ -445,6 +451,7 @@ function App() {
       projectId,
       date: dateInputValue(),
       hours: "",
+      minutes: "",
       description: "",
       isBillable: true,
     }));
@@ -458,10 +465,12 @@ function App() {
 
     setEditingEntryId(entry.id);
     setSelectedProjectId(entry.projectId);
+    const totalMinutes = Math.round(entry.durationMs / 60_000);
     setManualEntryForm({
       projectId: entry.projectId,
       date: dateInputValue(new Date(entry.startAt)),
-      hours: hoursFromMs(entry.durationMs).toFixed(2),
+      hours: String(Math.floor(totalMinutes / 60)),
+      minutes: String(totalMinutes % 60),
       description: entry.description,
       isBillable: entry.isBillable,
     });
@@ -948,8 +957,12 @@ function App() {
                     </div>
                   </div>
 
-                  <div className="grid gap-3 sm:grid-cols-3 lg:min-w-[520px]">
-                    <MiniPreview label="Registrado" value={`${formatHours(selectedProjectTrackedMs)} h`} />
+                  <div className="grid gap-3 sm:grid-cols-2 lg:min-w-[680px] lg:grid-cols-4">
+                    <MiniPreview label="Horas cargadas" value={`${formatHours(selectedProjectTrackedMs)} h`} />
+                    <MiniPreview
+                      label="Dinero cargado"
+                      value={formatMoney(selectedProjectTotal, selectedProject.currency)}
+                    />
                     <MiniPreview
                       label="Pendiente"
                       value={formatMoney(selectedProjectPendingTotal, selectedProject.currency)}
@@ -1040,7 +1053,7 @@ function App() {
                 </CardHeader>
                 <CardContent>
                   <form className="space-y-4" onSubmit={handleCreateManualEntry}>
-                    <div className="grid gap-4 sm:grid-cols-2">
+                    <div className="grid gap-4 sm:grid-cols-3">
                       <Field label="Fecha">
                         <Input
                           type="date"
@@ -1058,14 +1071,31 @@ function App() {
                         <Input
                           type="number"
                           min="0"
-                          step="0.25"
+                          step="1"
                           value={manualEntryForm.hours}
-                          placeholder="2.5"
+                          placeholder="2"
                           onChange={(event) =>
                             setManualEntryForm((current) => ({
                               ...current,
                               projectId: selectedProject.id,
                               hours: event.target.value,
+                            }))
+                          }
+                        />
+                      </Field>
+                      <Field label="Minutos">
+                        <Input
+                          type="number"
+                          min="0"
+                          max="59"
+                          step="1"
+                          value={manualEntryForm.minutes}
+                          placeholder="30"
+                          onChange={(event) =>
+                            setManualEntryForm((current) => ({
+                              ...current,
+                              projectId: selectedProject.id,
+                              minutes: event.target.value,
                             }))
                           }
                         />
@@ -1288,7 +1318,7 @@ function App() {
                       ))}
                     </Select>
                   </Field>
-                  <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="grid gap-4 sm:grid-cols-3">
                     <Field label="Fecha">
                       <Input
                         type="date"
@@ -1305,13 +1335,29 @@ function App() {
                       <Input
                         type="number"
                         min="0"
-                        step="0.25"
+                        step="1"
                         value={manualEntryForm.hours}
-                        placeholder="2.5"
+                        placeholder="2"
                         onChange={(event) =>
                           setManualEntryForm((current) => ({
                             ...current,
                             hours: event.target.value,
+                          }))
+                        }
+                      />
+                    </Field>
+                    <Field label="Minutos">
+                      <Input
+                        type="number"
+                        min="0"
+                        max="59"
+                        step="1"
+                        value={manualEntryForm.minutes}
+                        placeholder="30"
+                        onChange={(event) =>
+                          setManualEntryForm((current) => ({
+                            ...current,
+                            minutes: event.target.value,
                           }))
                         }
                       />
