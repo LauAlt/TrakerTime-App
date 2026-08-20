@@ -1,5 +1,6 @@
 import { FormEvent, useEffect, useState } from "react";
 import {
+  ArrowLeft,
   BarChart3,
   Clock3,
   Database,
@@ -53,9 +54,9 @@ import {
   summarizeByCurrency,
 } from "./lib/time";
 
-type View = "dashboard" | "projects" | "entries" | "invoices";
+type View = "dashboard" | "projects" | "project" | "entries" | "invoices";
 
-const navItems: Array<{ id: View; label: string; icon: typeof Clock3 }> = [
+const navItems: Array<{ id: Exclude<View, "project">; label: string; icon: typeof Clock3 }> = [
   { id: "dashboard", label: "Tracker", icon: Clock3 },
   { id: "projects", label: "Proyectos", icon: FolderKanban },
   { id: "entries", label: "Horas", icon: BarChart3 },
@@ -88,6 +89,7 @@ function shortDate(value: string) {
 function App() {
   const [data, setData] = useState<AppData>(() => loadData());
   const [view, setView] = useState<View>("dashboard");
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [now, setNow] = useState(() => new Date());
   const activeProjects = data.projects.filter((project) => !project.archivedAt);
   const firstProjectId = activeProjects[0]?.id ?? "";
@@ -141,8 +143,22 @@ function App() {
     }
   }, [firstProjectId, invoiceForm.projectId, manualEntryForm.projectId, timerProjectId]);
 
+  useEffect(() => {
+    if (
+      view === "project" &&
+      selectedProjectId &&
+      !data.projects.some((project) => project.id === selectedProjectId)
+    ) {
+      setSelectedProjectId(null);
+      setView("projects");
+    }
+  }, [data.projects, selectedProjectId, view]);
+
   const activeTimerProject = data.activeTimer
     ? getProject(data.projects, data.activeTimer.projectId)
+    : undefined;
+  const selectedProject = selectedProjectId
+    ? getProject(data.projects, selectedProjectId)
     : undefined;
   const activeElapsedMs = data.activeTimer
     ? now.getTime() - new Date(data.activeTimer.startedAt).getTime()
@@ -180,6 +196,38 @@ function App() {
     (total, entry) => total + calculateEntryAmount(entry, selectedInvoiceProject),
     0,
   );
+
+  const selectedProjectEntries = selectedProject
+    ? sortEntriesNewestFirst(
+        data.entries.filter((entry) => entry.projectId === selectedProject.id),
+      )
+    : [];
+  const selectedProjectPendingEntries = selectedProjectEntries.filter(
+    (entry) => entry.isBillable && !entry.invoiceId,
+  );
+  const selectedProjectTrackedMs = selectedProjectEntries.reduce(
+    (total, entry) => total + entry.durationMs,
+    0,
+  );
+  const selectedProjectPendingTotal = selectedProjectPendingEntries.reduce(
+    (total, entry) => total + calculateEntryAmount(entry, selectedProject),
+    0,
+  );
+  const selectedProjectInvoices = selectedProject
+    ? data.invoices.filter((invoice) => invoice.projectId === selectedProject.id)
+    : [];
+  const isSelectedProjectTimerActive =
+    Boolean(selectedProject && data.activeTimer?.projectId === selectedProject.id);
+
+  function openProject(projectId: string) {
+    setSelectedProjectId(projectId);
+    setTimerProjectId(projectId);
+    setManualEntryForm((current) => ({ ...current, projectId }));
+    setInvoiceForm((current) => ({ ...current, projectId }));
+    setSelectedEntryIds([]);
+    setEditingEntryId(null);
+    setView("project");
+  }
 
   function updateProjectForm(key: keyof typeof projectForm, value: string) {
     setProjectForm((current) => ({ ...current, [key]: value }));
@@ -288,10 +336,11 @@ function App() {
       currency: project.currency,
       color: projectForm.color,
     });
+    openProject(project.id);
   }
 
-  function handleStartTimer() {
-    const projectId = timerProjectId || firstProjectId;
+  function handleStartTimer(projectIdOverride?: string) {
+    const projectId = projectIdOverride || timerProjectId || firstProjectId;
 
     if (!projectId || data.activeTimer) {
       return;
@@ -402,12 +451,13 @@ function App() {
     setEditingEntryId(null);
   }
 
-  function handleEditEntry(entry: TimeEntry) {
+  function handleEditEntry(entry: TimeEntry, nextView: View = "entries") {
     if (entry.invoiceId) {
       return;
     }
 
     setEditingEntryId(entry.id);
+    setSelectedProjectId(entry.projectId);
     setManualEntryForm({
       projectId: entry.projectId,
       date: dateInputValue(new Date(entry.startAt)),
@@ -415,7 +465,7 @@ function App() {
       description: entry.description,
       isBillable: entry.isBillable,
     });
-    setView("entries");
+    setView(nextView);
   }
 
   function handleDeleteEntry(entryId: string) {
@@ -444,32 +494,33 @@ function App() {
     );
   }
 
-  function handleCreateInvoice() {
-    if (!selectedInvoiceProject || selectedInvoiceEntries.length === 0) {
+  function createInvoiceForEntries(project: Project, entries: TimeEntry[]) {
+    if (entries.length === 0) {
       return;
     }
 
     const createdAt = new Date().toISOString();
+    const subtotal = entries.reduce(
+      (total, entry) => total + calculateEntryAmount(entry, project),
+      0,
+    );
     const invoice: Invoice = {
       id: makeId("invoice"),
       number: `FAC-${new Date().getFullYear()}-${String(data.invoices.length + 1).padStart(
         4,
         "0",
       )}`,
-      projectId: selectedInvoiceProject.id,
-      clientName: selectedInvoiceProject.clientName,
+      projectId: project.id,
+      clientName: project.clientName,
       issueDate: invoiceForm.issueDate,
       dueDate: invoiceForm.dueDate,
       freelancerName: invoiceForm.freelancerName.trim(),
       taxLabel: invoiceForm.taxLabel.trim(),
       notes: invoiceForm.notes.trim(),
-      currency: selectedInvoiceProject.currency,
-      subtotal: selectedInvoiceTotal,
-      totalHours: selectedInvoiceEntries.reduce(
-        (total, entry) => total + hoursFromMs(entry.durationMs),
-        0,
-      ),
-      entryIds: selectedInvoiceEntries.map((entry) => entry.id),
+      currency: project.currency,
+      subtotal,
+      totalHours: entries.reduce((total, entry) => total + hoursFromMs(entry.durationMs), 0),
+      entryIds: entries.map((entry) => entry.id),
       createdAt,
     };
 
@@ -488,7 +539,19 @@ function App() {
       },
     }));
     setSelectedEntryIds([]);
-    downloadInvoicePdf(invoice, selectedInvoiceProject, selectedInvoiceEntries);
+    downloadInvoicePdf(invoice, project, entries);
+  }
+
+  function handleCreateInvoice() {
+    if (!selectedInvoiceProject || selectedInvoiceEntries.length === 0) {
+      return;
+    }
+
+    createInvoiceForEntries(selectedInvoiceProject, selectedInvoiceEntries);
+  }
+
+  function handleCreateProjectInvoice(project: Project) {
+    createInvoiceForEntries(project, selectedProjectPendingEntries);
   }
 
   function handleDownloadExistingInvoice(invoice: Invoice) {
@@ -524,7 +587,11 @@ function App() {
               return (
                 <Button
                   key={item.id}
-                  variant={view === item.id ? "default" : "outline"}
+                  variant={
+                    view === item.id || (view === "project" && item.id === "projects")
+                      ? "default"
+                      : "outline"
+                  }
                   size="sm"
                   onClick={() => setView(item.id)}
                 >
@@ -704,7 +771,7 @@ function App() {
                 <div className="flex flex-wrap gap-2">
                   <Button
                     disabled={Boolean(data.activeTimer) || !activeProjects.length}
-                    onClick={handleStartTimer}
+                    onClick={() => handleStartTimer()}
                   >
                     <Play className="size-4" />
                     Iniciar
@@ -809,7 +876,12 @@ function App() {
                     );
 
                     return (
-                      <div key={project.id} className="rounded-lg border bg-background p-4">
+                      <button
+                        key={project.id}
+                        type="button"
+                        className="rounded-lg border bg-background p-4 text-left transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        onClick={() => openProject(project.id)}
+                      >
                         <div className="flex items-start justify-between gap-3">
                           <div>
                             <p className="text-sm text-muted-foreground">{project.clientName}</p>
@@ -835,7 +907,7 @@ function App() {
                         <p className="mt-3 text-sm font-medium">
                           {formatMoney(projectRevenue, project.currency)}
                         </p>
-                      </div>
+                      </button>
                     );
                   })
                 ) : (
@@ -845,6 +917,343 @@ function App() {
                 )}
               </CardContent>
             </Card>
+          </section>
+        )}
+
+        {view === "project" && selectedProject && (
+          <section className="grid gap-5 py-5">
+            <Card>
+              <CardContent className="p-5">
+                <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+                  <div className="flex items-start gap-4">
+                    <Button variant="outline" size="icon" onClick={() => setView("projects")}>
+                      <ArrowLeft className="size-4" />
+                    </Button>
+                    <div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <div
+                          className="h-3 w-14 rounded-full border"
+                          style={{ backgroundColor: selectedProject.color }}
+                        />
+                        <p className="text-sm text-muted-foreground">
+                          {selectedProject.clientName}
+                        </p>
+                      </div>
+                      <h2 className="mt-2 text-3xl font-semibold tracking-normal">
+                        {selectedProject.name}
+                      </h2>
+                      <p className="mt-1 text-sm text-muted-foreground">
+                        {formatMoney(selectedProject.hourlyRate, selectedProject.currency)}/h
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="grid gap-3 sm:grid-cols-3 lg:min-w-[520px]">
+                    <MiniPreview label="Registrado" value={`${formatHours(selectedProjectTrackedMs)} h`} />
+                    <MiniPreview
+                      label="Pendiente"
+                      value={formatMoney(selectedProjectPendingTotal, selectedProject.currency)}
+                    />
+                    <MiniPreview label="Logs" value={String(selectedProjectEntries.length)} />
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <section className="grid gap-5 lg:grid-cols-[1.05fr_0.95fr]">
+              <Card className="overflow-hidden">
+                <CardHeader className="border-b bg-card/80">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div>
+                      <CardTitle>Tracker del proyecto</CardTitle>
+                      <CardDescription>
+                        Inicia y detiene el stopwatch sin salir del proyecto.
+                      </CardDescription>
+                    </div>
+                    {isSelectedProjectTimerActive ? (
+                      <div className="flex w-fit items-center gap-2 rounded-md border border-red-200 bg-red-50 px-2.5 py-1 text-xs font-semibold text-red-700">
+                        <span className="size-2 rounded-full bg-red-600 animate-pulse" />
+                        REC activo
+                      </div>
+                    ) : data.activeTimer ? (
+                      <Badge variant="secondary">Otro proyecto activo</Badge>
+                    ) : (
+                      <Badge variant="secondary">Listo</Badge>
+                    )}
+                  </div>
+                </CardHeader>
+                <CardContent className="space-y-5 p-5">
+                  <div className="rounded-lg border bg-muted/30 p-5">
+                    <p className="text-sm text-muted-foreground">
+                      {isSelectedProjectTimerActive
+                        ? data.activeTimer?.description || "Sesion activa"
+                        : "Sin sesion activa"}
+                    </p>
+                    <div className="mt-2 font-mono text-5xl font-semibold tracking-normal sm:text-6xl">
+                      {isSelectedProjectTimerActive ? formatTimer(activeElapsedMs) : "00:00:00"}
+                    </div>
+                  </div>
+
+                  <Field label="Nombre opcional del log">
+                    <Input
+                      value={timerDescription}
+                      disabled={Boolean(data.activeTimer)}
+                      placeholder="Ej: Revision de landing"
+                      onChange={(event) => setTimerDescription(event.target.value)}
+                    />
+                  </Field>
+
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      disabled={Boolean(data.activeTimer)}
+                      onClick={() => handleStartTimer(selectedProject.id)}
+                    >
+                      <Play className="size-4" />
+                      Iniciar
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      disabled={!isSelectedProjectTimerActive}
+                      onClick={handleStopTimer}
+                    >
+                      <Square className="size-4" />
+                      Detener y guardar
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      disabled={!isSelectedProjectTimerActive}
+                      onClick={handleDiscardTimer}
+                    >
+                      <TimerReset className="size-4" />
+                      Descartar
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle>{editingEntryId ? "Editar log" : "Agregar horas manuales"}</CardTitle>
+                  <CardDescription>
+                    Carga horas con fecha y nombre opcional dentro del proyecto.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <form className="space-y-4" onSubmit={handleCreateManualEntry}>
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      <Field label="Fecha">
+                        <Input
+                          type="date"
+                          value={manualEntryForm.date}
+                          onChange={(event) =>
+                            setManualEntryForm((current) => ({
+                              ...current,
+                              projectId: selectedProject.id,
+                              date: event.target.value,
+                            }))
+                          }
+                        />
+                      </Field>
+                      <Field label="Horas">
+                        <Input
+                          type="number"
+                          min="0"
+                          step="0.25"
+                          value={manualEntryForm.hours}
+                          placeholder="2.5"
+                          onChange={(event) =>
+                            setManualEntryForm((current) => ({
+                              ...current,
+                              projectId: selectedProject.id,
+                              hours: event.target.value,
+                            }))
+                          }
+                        />
+                      </Field>
+                    </div>
+                    <Field label="Nombre opcional">
+                      <Textarea
+                        value={manualEntryForm.description}
+                        placeholder="Ej: Ajustes de responsive"
+                        onChange={(event) =>
+                          setManualEntryForm((current) => ({
+                            ...current,
+                            projectId: selectedProject.id,
+                            description: event.target.value,
+                          }))
+                        }
+                      />
+                    </Field>
+                    <label className="flex items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        className="size-4 rounded border-input"
+                        checked={manualEntryForm.isBillable}
+                        onChange={(event) =>
+                          setManualEntryForm((current) => ({
+                            ...current,
+                            projectId: selectedProject.id,
+                            isBillable: event.target.checked,
+                          }))
+                        }
+                      />
+                      Facturable
+                    </label>
+                    <div className="flex flex-col gap-2 sm:flex-row">
+                      <Button className="flex-1" type="submit">
+                        {editingEntryId ? <Save className="size-4" /> : <Plus className="size-4" />}
+                        {editingEntryId ? "Guardar cambios" : "Agregar horas"}
+                      </Button>
+                      {editingEntryId && (
+                        <Button
+                          className="flex-1"
+                          type="button"
+                          variant="outline"
+                          onClick={() => resetManualEntryForm(selectedProject.id)}
+                        >
+                          <X className="size-4" />
+                          Cancelar
+                        </Button>
+                      )}
+                    </div>
+                  </form>
+                </CardContent>
+              </Card>
+            </section>
+
+            <section className="grid gap-5 lg:grid-cols-[1.2fr_0.8fr]">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Logs del proyecto</CardTitle>
+                  <CardDescription>Horas cargadas con fecha, nombre opcional y estado.</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  {selectedProjectEntries.length ? (
+                    selectedProjectEntries.map((entry) => {
+                      const amount = calculateEntryAmount(entry, selectedProject);
+
+                      return (
+                        <div
+                          key={entry.id}
+                          className="grid gap-3 rounded-lg border bg-background p-3 sm:grid-cols-[1fr_auto]"
+                        >
+                          <div>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <Badge variant={entry.invoiceId ? "secondary" : "outline"}>
+                                {entry.invoiceId
+                                  ? "Facturado"
+                                  : entry.isBillable
+                                    ? "Facturable"
+                                    : "No facturable"}
+                              </Badge>
+                              <span className="text-sm text-muted-foreground">
+                                {shortDate(entry.startAt)}
+                              </span>
+                            </div>
+                            <p className="mt-2 font-medium">
+                              {entry.description || "Sin nombre"}
+                            </p>
+                          </div>
+                          <div className="flex items-center justify-between gap-4 sm:justify-end">
+                            <div className="text-right">
+                              <p className="font-semibold">{formatDuration(entry.durationMs)}</p>
+                              <p className="text-sm text-muted-foreground">
+                                {formatMoney(amount, selectedProject.currency)}
+                              </p>
+                            </div>
+                            <div className="flex items-center gap-1">
+                              <Button
+                                variant={editingEntryId === entry.id ? "secondary" : "ghost"}
+                                size="icon"
+                                disabled={Boolean(entry.invoiceId)}
+                                title={
+                                  entry.invoiceId
+                                    ? "No se puede editar una hora facturada"
+                                    : "Editar registro"
+                                }
+                                onClick={() => handleEditEntry(entry, "project")}
+                              >
+                                <Pencil className="size-4" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                disabled={Boolean(entry.invoiceId)}
+                                title={
+                                  entry.invoiceId
+                                    ? "No se puede borrar una hora facturada"
+                                    : "Borrar registro"
+                                }
+                                onClick={() => handleDeleteEntry(entry.id)}
+                              >
+                                <Trash2 className="size-4" />
+                              </Button>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })
+                  ) : (
+                    <EmptyState text="Todavia no hay logs para este proyecto." />
+                  )}
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle>Factura del proyecto</CardTitle>
+                  <CardDescription>Descarga un PDF con todas las horas facturables pendientes.</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="rounded-lg border bg-muted/30 p-4">
+                    <p className="text-sm text-muted-foreground">Pendiente de facturar</p>
+                    <p className="mt-1 text-2xl font-semibold tracking-normal">
+                      {formatMoney(selectedProjectPendingTotal, selectedProject.currency)}
+                    </p>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      {selectedProjectPendingEntries.length} logs facturables
+                    </p>
+                  </div>
+                  <Button
+                    className="w-full"
+                    disabled={selectedProjectPendingEntries.length === 0}
+                    onClick={() => handleCreateProjectInvoice(selectedProject)}
+                  >
+                    <Download className="size-4" />
+                    Descargar factura
+                  </Button>
+
+                  <div className="space-y-2">
+                    <p className="text-sm font-medium">Facturas generadas</p>
+                    {selectedProjectInvoices.length ? (
+                      selectedProjectInvoices.map((invoice) => (
+                        <div
+                          key={invoice.id}
+                          className="flex items-center justify-between gap-3 rounded-md border bg-background px-3 py-2"
+                        >
+                          <div>
+                            <p className="text-sm font-medium">{invoice.number}</p>
+                            <p className="text-xs text-muted-foreground">
+                              {invoice.totalHours.toFixed(2)} h
+                            </p>
+                          </div>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            title="Descargar PDF"
+                            onClick={() => handleDownloadExistingInvoice(invoice)}
+                          >
+                            <Download className="size-4" />
+                          </Button>
+                        </div>
+                      ))
+                    ) : (
+                      <EmptyState text="Sin facturas generadas." />
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+            </section>
           </section>
         )}
 
