@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import {
   BarChart3,
   Clock3,
@@ -6,13 +6,16 @@ import {
   Download,
   FileText,
   FolderKanban,
+  Pencil,
   Play,
   Plus,
   ReceiptText,
+  Save,
   Square,
   TimerReset,
   Trash2,
   Wallet,
+  X,
 } from "lucide-react";
 import { Badge } from "./components/ui/badge";
 import { Button } from "./components/ui/button";
@@ -104,6 +107,7 @@ function App() {
     description: "",
     isBillable: true,
   });
+  const [editingEntryId, setEditingEntryId] = useState<string | null>(null);
   const [invoiceForm, setInvoiceForm] = useState({
     projectId: firstProjectId,
     issueDate: dateInputValue(),
@@ -347,6 +351,28 @@ function App() {
     const startAt = new Date(`${manualEntryForm.date}T09:00:00`);
     const durationMs = Math.round(hours * 3_600_000);
     const endAt = new Date(startAt.getTime() + durationMs);
+
+    if (editingEntryId) {
+      setData((current) => ({
+        ...current,
+        entries: current.entries.map((entry) =>
+          entry.id === editingEntryId && !entry.invoiceId
+            ? {
+                ...entry,
+                projectId,
+                description: manualEntryForm.description.trim(),
+                startAt: startAt.toISOString(),
+                endAt: endAt.toISOString(),
+                durationMs,
+                isBillable: manualEntryForm.isBillable,
+              }
+            : entry,
+        ),
+      }));
+      resetManualEntryForm(projectId);
+      return;
+    }
+
     const entry: TimeEntry = {
       id: makeId("entry"),
       projectId,
@@ -361,11 +387,35 @@ function App() {
       ...current,
       entries: [entry, ...current.entries],
     }));
+    resetManualEntryForm(projectId);
+  }
+
+  function resetManualEntryForm(projectId = manualEntryForm.projectId || firstProjectId) {
     setManualEntryForm((current) => ({
       ...current,
+      projectId,
+      date: dateInputValue(),
       hours: "",
       description: "",
+      isBillable: true,
     }));
+    setEditingEntryId(null);
+  }
+
+  function handleEditEntry(entry: TimeEntry) {
+    if (entry.invoiceId) {
+      return;
+    }
+
+    setEditingEntryId(entry.id);
+    setManualEntryForm({
+      projectId: entry.projectId,
+      date: dateInputValue(new Date(entry.startAt)),
+      hours: hoursFromMs(entry.durationMs).toFixed(2),
+      description: entry.description,
+      isBillable: entry.isBillable,
+    });
+    setView("entries");
   }
 
   function handleDeleteEntry(entryId: string) {
@@ -373,6 +423,9 @@ function App() {
       ...current,
       entries: current.entries.filter((entry) => entry.id !== entryId || entry.invoiceId),
     }));
+    if (editingEntryId === entryId) {
+      resetManualEntryForm();
+    }
   }
 
   function selectInvoiceProject(projectId: string) {
@@ -799,8 +852,12 @@ function App() {
           <section className="grid gap-5 lg:grid-cols-[0.8fr_1.2fr]">
             <Card>
               <CardHeader>
-                <CardTitle>Carga manual</CardTitle>
-                <CardDescription>Para horas que olvidaste iniciar en vivo.</CardDescription>
+                <CardTitle>{editingEntryId ? "Editar horas" : "Carga manual"}</CardTitle>
+                <CardDescription>
+                  {editingEntryId
+                    ? "Actualiza proyecto, fecha, tiempo, detalle o estado facturable."
+                    : "Para horas que olvidaste iniciar en vivo."}
+                </CardDescription>
               </CardHeader>
               <CardContent>
                 <form className="space-y-4" onSubmit={handleCreateManualEntry}>
@@ -877,10 +934,23 @@ function App() {
                     />
                     Facturable
                   </label>
-                  <Button className="w-full" type="submit">
-                    <Plus className="size-4" />
-                    Agregar horas
-                  </Button>
+                  <div className="flex flex-col gap-2 sm:flex-row">
+                    <Button className="flex-1" type="submit">
+                      {editingEntryId ? <Save className="size-4" /> : <Plus className="size-4" />}
+                      {editingEntryId ? "Guardar cambios" : "Agregar horas"}
+                    </Button>
+                    {editingEntryId && (
+                      <Button
+                        className="flex-1"
+                        type="button"
+                        variant="outline"
+                        onClick={() => resetManualEntryForm()}
+                      >
+                        <X className="size-4" />
+                        Cancelar
+                      </Button>
+                    )}
+                  </div>
                 </form>
               </CardContent>
             </Card>
@@ -926,19 +996,34 @@ function App() {
                               </p>
                             )}
                           </div>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            disabled={Boolean(entry.invoiceId)}
-                            title={
-                              entry.invoiceId
-                                ? "No se puede borrar una hora facturada"
-                                : "Borrar registro"
-                            }
-                            onClick={() => handleDeleteEntry(entry.id)}
-                          >
-                            <Trash2 className="size-4" />
-                          </Button>
+                          <div className="flex items-center gap-1">
+                            <Button
+                              variant={editingEntryId === entry.id ? "secondary" : "ghost"}
+                              size="icon"
+                              disabled={Boolean(entry.invoiceId)}
+                              title={
+                                entry.invoiceId
+                                  ? "No se puede editar una hora facturada"
+                                  : "Editar registro"
+                              }
+                              onClick={() => handleEditEntry(entry)}
+                            >
+                              <Pencil className="size-4" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              disabled={Boolean(entry.invoiceId)}
+                              title={
+                                entry.invoiceId
+                                  ? "No se puede borrar una hora facturada"
+                                  : "Borrar registro"
+                              }
+                              onClick={() => handleDeleteEntry(entry.id)}
+                            >
+                              <Trash2 className="size-4" />
+                            </Button>
+                          </div>
                         </div>
                       </div>
                     );
