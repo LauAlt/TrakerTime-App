@@ -503,7 +503,7 @@ function App() {
   }
 
   return (
-    <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,rgba(15,118,110,0.08),transparent_34rem),linear-gradient(180deg,rgba(255,255,255,0.86),rgba(248,247,241,0.94))]">
+    <main className="min-h-screen bg-background">
       <div className="mx-auto flex min-h-screen w-full max-w-7xl flex-col px-4 py-5 sm:px-6 lg:px-8">
         <header className="flex flex-col gap-4 border-b border-border/70 pb-5 md:flex-row md:items-center md:justify-between">
           <div className="flex items-center gap-3">

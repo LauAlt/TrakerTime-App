@@ -1,4 +1,4 @@
-import type { AppData } from "./types";
+import { PROJECT_COLORS, type AppData } from "./types";
 
 const STORAGE_KEY = "hora-clara.data.v1";
 
@@ -24,6 +24,8 @@ export function loadData(): AppData {
 
     const parsed = JSON.parse(raw) as Partial<AppData>;
 
+    const projects = parsed.projects ?? [];
+
     return {
       ...defaultData,
       ...parsed,
@@ -31,7 +33,12 @@ export function loadData(): AppData {
         ...defaultData.settings,
         ...parsed.settings,
       },
-      projects: parsed.projects ?? [],
+      projects: projects.map((project, index) => ({
+        ...project,
+        color: PROJECT_COLORS.includes(project.color)
+          ? project.color
+          : PROJECT_COLORS[index % PROJECT_COLORS.length],
+      })),
       entries: parsed.entries ?? [],
       invoices: parsed.invoices ?? [],
     };

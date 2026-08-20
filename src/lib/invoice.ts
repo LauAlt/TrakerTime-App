@@ -25,7 +25,7 @@ export function downloadInvoicePdf(
   const pageWidth = doc.internal.pageSize.getWidth();
   let y = 18;
 
-  doc.setFillColor(15, 118, 110);
+  doc.setFillColor(17, 17, 17);
   doc.rect(0, 0, pageWidth, 34, "F");
   doc.setTextColor(255, 255, 255);
   doc.setFontSize(22);

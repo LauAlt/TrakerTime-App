@@ -87,12 +87,9 @@ export const CURRENCIES: Record<
 };
 
 export const PROJECT_COLORS = [
-  "#0f766e",
-  "#2563eb",
-  "#b45309",
-  "#be123c",
-  "#4d7c0f",
-  "#7c3aed",
-  "#0369a1",
-  "#a16207",
+  "#FEF9DB",
+  "#F2913D",
+  "#0CA8BA",
+  "#9EC17C",
+  "#1F201E",
 ];
